@@ -1,0 +1,46 @@
+# Reusable workflow: applies the EXACT plan produced by the plan job.
+# The GitHub environment ("dev" / "prod") holds:
+# - variable AWS_APPLY_ROLE_ARN
+# - protection rules (prod: required reviewers = the approval gate)
+name: Terraform apply
+on:
+workflow_call:
+inputs:
+environment:
+type: string
+required: true
+env:
+TF_VERSION: "1.13.3"
+TF_IN_AUTOMATION: "true"
+TF_INPUT: "false"
+AWS_REGION: "ap-south-1"
+jobs:
+apply:
+runs-on: ubuntu-latest
+environment: ${{ inputs.environment }}
+permissions:
+contents: read
+id-token: write
+defaults:
+run:
+working-directory: environments/${{ inputs.environment }}
+steps:
+- uses: actions/checkout@v4
+- uses: hashicorp/setup-terraform@v3
+with:
+terraform_version: ${{ env.TF_VERSION }}
+terraform_wrapper: false
+- name: AWS credentials (OIDC, apply role)
+uses: aws-actions/configure-aws-credentials@v4
+with:
+role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+aws-region: ${{ env.AWS_REGION }}
+- name: Download reviewed plan
+uses: actions/download-artifact@v4
+with:
+name: tfplan-${{ inputs.environment }}
+path: environments/${{ inputs.environment }}
+- name: terraform init
+run: terraform init
+- name: terraform apply (saved plan)
+run: terraform apply -lock-timeout=5m tfplan
