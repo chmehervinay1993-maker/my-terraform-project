@@ -1,0 +1,10 @@
+- name: Detect drift
+id: drift
+run: |
+set +e
+terraform plan -detailed-exitcode -lock=false -no-color > drift.txt
+code=$?
+set -e
+echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+# 0 = no changes, 1 = error, 2 = drift
+if [ "$code" -eq 1 ]; then cat drift.txt; exit 1; fi
