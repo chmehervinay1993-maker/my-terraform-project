@@ -1,0 +1,25 @@
+# Local .terraform directories
+**/.terraform/*
+# State files - never commit these
+*.tfstate
+*.tfstate.*
+# Plan files (may contain secrets)
+tfplan
+*.tfplan
+tfplan.json
+plan.txt
+# Crash logs
+crash.log
+crash.*.log
+# Secret variable files - commit only non-secret terraform.tfvars
+secrets.tfvars
+*.secret.tfvars
+# Local overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# CLI config
+.terraformrc
+terraform.rc
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored - commit it.
