@@ -1,176 +1,200 @@
 name: Terraform
+
 on:
-pull_request:
-branches: [main]
-paths:
-- "environments/**"
-- "modules/**"
-- "policy/**"
-- ".github/workflows/terraform.yml"
-- ".github/workflows/terraform-apply.yml"
-push:
-branches: [main]
-paths:
-- "environments/**"
-- "modules/**"
-- "policy/**"
-- ".github/workflows/terraform.yml"
-- ".github/workflows/terraform-apply.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "policy/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/terraform-apply.yml"
+  push:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "policy/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/terraform-apply.yml"
+
 permissions:
-contents: read
+  contents: read
+
 # Never run two pipelines against the same branch at once.
 concurrency:
-group: terraform-${{ github.ref }}
-cancel-in-progress: false
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
-TF_VERSION: "1.13.3"
-TF_IN_AUTOMATION: "true"
-TF_INPUT: "false"
-AWS_REGION: "ap-south-1"
+  TF_VERSION: "1.13.3"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REGION: "ap-south-1"
+
 jobs:
-# ---------------------------------------------------------------- checks
-checks:
-name: Format, lint, test, scan
-runs-on: ubuntu-latest
-steps:
-- uses: actions/checkout@v4
-- uses: hashicorp/setup-terraform@v3
-with:
-terraform_version: ${{ env.TF_VERSION }}
-terraform_wrapper: false
-- name: terraform fmt
-run: terraform fmt -check -recursive -diff
-- uses: terraform-linters/setup-tflint@v4
-- name: tflint
-run: |
-tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
-tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
-env:
-GITHUB_TOKEN: ${{ github.token }}
-- name: Module tests (mocked provider)
-working-directory: modules/network
-run: |
-terraform init -backend=false
-terraform test
-- name: Checkov security scan
-uses: bridgecrewio/checkov-action@v12
-with:
-directory: .
-framework: terraform
-quiet: true
-# ------------------------------------------------------------------ plan
-plan:
-name: Plan (${{ matrix.environment }})
-needs: checks
-runs-on: ubuntu-latest
-permissions:
-contents: read
-id-token: write # OIDC token for AWS
-pull-requests: write # post plan as PR comment
-strategy:
-fail-fast: false
-matrix:
-environment: [dev, prod]
-defaults:
-run:
-working-directory: environments/${{ matrix.environment }}
-steps:
-- uses: actions/checkout@v4
-- uses: hashicorp/setup-terraform@v3
-with:
-terraform_version: ${{ env.TF_VERSION }}
-terraform_wrapper: false
-- name: AWS credentials (OIDC, read-only plan role)
-uses: aws-actions/configure-aws-credentials@v4
-with:
-role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
-aws-region: ${{ env.AWS_REGION }}
-- name: terraform init
-run: terraform init
-- name: terraform validate
-run: terraform validate
-- name: terraform plan
-run: |
-terraform plan -lock-timeout=5m -out=tfplan
-terraform show -no-color tfplan > plan.txt
-terraform show -json tfplan > tfplan.json
-- name: Install conftest
-run: |
-V=0.56.0
-URL=https://github.com/open-policy-agent/conftest/releases/download
-curl -sSL "$URL/v${V}/conftest_${V}_Linux_x86_64.tar.gz" | tar -xz conftest
-sudo install -m 0755 conftest /usr/local/bin/conftest
-- name: Policy checks (tags, protected resources)
-run: conftest test tfplan.json --policy "$GITHUB_WORKSPACE/policy"
-- name: Plan to job summary
-run: |
-{
-echo "### Terraform plan: ${{ matrix.environment }}"
-echo '```'
-head -c 60000 plan.txt
-echo '```'
-} >> "$GITHUB_STEP_SUMMARY"
-- name: Comment plan on PR
-if: github.event_name == 'pull_request'
-uses: actions/github-script@v7
-env:
-PLAN_ENV: ${{ matrix.environment }}
-with:
-script: |
-const fs = require('fs');
-const env = process.env.PLAN_ENV;
-let plan = fs.readFileSync(`environments/${env}/plan.txt`, 'utf8');
-if (plan.length > 60000) {
-plan = plan.substring(0, 60000) + '\n... truncated, see job summary';
-}
-const marker = `<!-- terraform-plan-${env} -->`;
-const body = [
-marker,
-`### Terraform plan: \`${env}\``,
-'<details><summary>Show plan</summary>',
-'',
-'```terraform',
-plan,
-'```',
-'</details>',
-].join('\n');
-const { owner, repo } = context.repo;
-const issue_number = context.issue.number;
-const { data: comments } = await github.rest.issues.listComments(
-{ owner, repo, issue_number });
-const old = comments.find(c => c.body.includes(marker));
-if (old) {
-await github.rest.issues.updateComment(
-{ owner, repo, comment_id: old.id, body });
-} else {
-await github.rest.issues.createComment(
-{ owner, repo, issue_number, body });
-}
-- name: Upload plan for apply (main only)
-if: github.event_name == 'push'
-uses: actions/upload-artifact@v4
-with:
-name: tfplan-${{ matrix.environment }}
-path: environments/${{ matrix.environment }}/tfplan
-retention-days: 3
-# ----------------------------------------------------------------- apply
-apply-dev:
-name: Apply dev
-if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-needs: plan
-permissions:
-contents: read
-id-token: write
-uses: ./.github/workflows/terraform-apply.yml
-with:
-environment: dev
-apply-prod:
-name: Apply prod
-if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-needs: apply-dev # promote dev -> prod
-permissions:
-contents: read
-id-token: write
-uses: ./.github/workflows/terraform-apply.yml
-with:
-environment: prod
+  # ---------------------------------------------------------------- checks
+  checks:
+    name: Format, lint, test, scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Module tests (mocked provider)
+        working-directory: modules/network
+        run: |
+          terraform init -backend=false
+          terraform test
+
+      - name: Checkov security scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+
+  # ------------------------------------------------------------------ plan
+  plan:
+    name: Plan (${{ matrix.environment }})
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # OIDC token for AWS
+      pull-requests: write  # post plan as PR comment
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+    defaults:
+      run:
+        working-directory: environments/${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: AWS credentials (OIDC, read-only plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        run: |
+          terraform plan -lock-timeout=5m -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+          terraform show -json tfplan > tfplan.json
+
+      - name: Install conftest
+        run: |
+          V=0.56.0
+          URL=https://github.com/open-policy-agent/conftest/releases/download
+          curl -sSL "$URL/v${V}/conftest_${V}_Linux_x86_64.tar.gz" | tar -xz conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+
+      - name: Policy checks (tags, protected resources)
+        run: conftest test tfplan.json --policy "$GITHUB_WORKSPACE/policy"
+
+      - name: Plan to job summary
+        run: |
+          {
+            echo "### Terraform plan: ${{ matrix.environment }}"
+            echo '```'
+            head -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN_ENV: ${{ matrix.environment }}
+        with:
+          script: |
+            const fs = require('fs');
+            const env = process.env.PLAN_ENV;
+            let plan = fs.readFileSync(`environments/${env}/plan.txt`, 'utf8');
+            if (plan.length > 60000) {
+              plan = plan.substring(0, 60000) + '\n... truncated, see job summary';
+            }
+            const marker = `<!-- terraform-plan-${env} -->`;
+            const body = [
+              marker,
+              `### Terraform plan: \`${env}\``,
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '</details>',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments(
+              { owner, repo, issue_number });
+            const old = comments.find(c => c.body.includes(marker));
+            if (old) {
+              await github.rest.issues.updateComment(
+                { owner, repo, comment_id: old.id, body });
+            } else {
+              await github.rest.issues.createComment(
+                { owner, repo, issue_number, body });
+            }
+
+      - name: Upload plan for apply (main only)
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: environments/${{ matrix.environment }}/tfplan
+          retention-days: 3
+
+  # ----------------------------------------------------------------- apply
+  apply-dev:
+    name: Apply dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: plan
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      environment: dev
+
+  apply-prod:
+    name: Apply prod
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: apply-dev   # promote dev -> prod
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      environment: prod
