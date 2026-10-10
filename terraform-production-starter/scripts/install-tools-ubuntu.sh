@@ -12,8 +12,8 @@ if [ "$(dpkg --print-architecture)" != "amd64" ]; then
   exit 1
 fi
 
-# Private temp dir, cleaned up on exit
-TMPDIR_INSTALL="$(mktemp -d)"
+# Private temp dir on disk (not /tmp, which can be a small RAM-backed tmpfs), cleaned up on exit
+TMPDIR_INSTALL="$(mktemp -d -p "${HOME}" .tools-install.XXXXXX)"
 trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
 
 echo "==> Base packages"
@@ -34,8 +34,8 @@ echo "==> TFLint"
 # The old install_linux.sh script was removed from the TFLint repo (404),
 # so download the release zip and verify its checksum instead.
 TFLINT_BASE="https://github.com/terraform-linters/tflint/releases/latest/download"
-curl -fsSLo "${TMPDIR_INSTALL}/tflint_linux_amd64.zip" "${TFLINT_BASE}/tflint_linux_amd64.zip"
-curl -fsSLo "${TMPDIR_INSTALL}/tflint-checksums.txt" "${TFLINT_BASE}/checksums.txt"
+curl --retry 3 --retry-delay 2 -fsSLo "${TMPDIR_INSTALL}/tflint_linux_amd64.zip" "${TFLINT_BASE}/tflint_linux_amd64.zip"
+curl --retry 3 --retry-delay 2 -fsSLo "${TMPDIR_INSTALL}/tflint-checksums.txt" "${TFLINT_BASE}/checksums.txt"
 (cd "${TMPDIR_INSTALL}" && sha256sum --ignore-missing -c tflint-checksums.txt)
 unzip -q -o "${TMPDIR_INSTALL}/tflint_linux_amd64.zip" -d "${TMPDIR_INSTALL}/tflint-bin"
 sudo install -c -m 0755 "${TMPDIR_INSTALL}/tflint-bin/tflint" /usr/local/bin/tflint
@@ -57,21 +57,30 @@ pipx install pre-commit
 echo "==> terraform-docs"
 TFDOCS_URL="https://terraform-docs.io/dl/${TFDOCS_VERSION}"
 TFDOCS_FILE="terraform-docs-${TFDOCS_VERSION}-linux-amd64.tar.gz"
-curl -fsSLo "${TMPDIR_INSTALL}/terraform-docs.tar.gz" "${TFDOCS_URL}/${TFDOCS_FILE}"
+curl --retry 3 --retry-delay 2 -fsSLo "${TMPDIR_INSTALL}/terraform-docs.tar.gz" "${TFDOCS_URL}/${TFDOCS_FILE}"
 tar -xzf "${TMPDIR_INSTALL}/terraform-docs.tar.gz" -C "${TMPDIR_INSTALL}" terraform-docs
 sudo install -m 0755 "${TMPDIR_INSTALL}/terraform-docs" /usr/local/bin/terraform-docs
 
 echo "==> Conftest (OPA policy checks)"
 CONFTEST_URL="https://github.com/open-policy-agent/conftest/releases/download"
 CONFTEST_FILE="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
-curl -fsSL "${CONFTEST_URL}/v${CONFTEST_VERSION}/${CONFTEST_FILE}" \
+curl --retry 3 --retry-delay 2 -fsSL "${CONFTEST_URL}/v${CONFTEST_VERSION}/${CONFTEST_FILE}" \
   | tar -xz -C "${TMPDIR_INSTALL}" conftest
 sudo install -m 0755 "${TMPDIR_INSTALL}/conftest" /usr/local/bin/conftest
 
 echo "==> AWS CLI v2"
 if ! command -v aws >/dev/null 2>&1; then
-  curl -fsSLo "${TMPDIR_INSTALL}/awscliv2.zip" \
+  curl --retry 3 --retry-delay 2 -fsSLo "${TMPDIR_INSTALL}/awscliv2.zip" \
     "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+  # AWS CLI needs ~1 GB free while unpacking/installing
+  FREE_KB="$(df --output=avail -k "${TMPDIR_INSTALL}" | tail -1)"
+  if [ "${FREE_KB}" -lt 1048576 ]; then
+    echo "ERROR: less than 1 GB free in ${TMPDIR_INSTALL}; free up disk space and re-run." >&2
+    exit 1
+  fi
+  # Make sure the download is complete before unpacking
+  unzip -tq "${TMPDIR_INSTALL}/awscliv2.zip" >/dev/null \
+    || { echo "ERROR: awscliv2.zip is corrupt/truncated; re-run the script." >&2; exit 1; }
   unzip -q -o "${TMPDIR_INSTALL}/awscliv2.zip" -d "${TMPDIR_INSTALL}"
   sudo "${TMPDIR_INSTALL}/aws/install"
 fi
